@@ -1,0 +1,86 @@
+service: kinesis-serverless-data-driven
+
+plugins:
+  - serverless-pseudo-parameters
+
+package:
+  exclude:
+    - /**/*.md
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-southeast-2'}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:GetItem
+      Resource:
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/ordersTable
+    - Effect: Allow
+      Action:
+        - kinesis:PutRecord
+      Resource:
+        - arn:aws:kinesis:#{AWS::Region}:#{AWS::AccountId}:stream/order-events-stream
+
+functions:
+  createOrder:
+    handler: handler.createOrder
+    events:
+      - http:
+          path: /order
+          method: post
+    environment:
+      orderTableName: ordersTable
+      orderStreamName: order-events-stream
+  fullfillOrder:
+    handler: handler.fullfillOrder
+    events:
+      - http:
+          path: /order/fullfill
+          method: post
+    environment:
+      orderTableName: ordersTable
+      orderStreamName: order-events-stream
+  notifyProducer:
+    handler: handler.notifyProducer
+    events:
+      - stream:
+          arn: arn:aws:kinesis:#{AWS::Region}:#{AWS::AccountId}:stream/order-events-stream
+  deliveryOrder:
+    handler: handler.deliveryOrder
+    events:
+      - sqs:
+        arn: arn:aws:sqs:#{AWS::Region}:#{AWS::AccountId}:sqs/deliveryServiceQueue
+    environment:
+      region: ${opt:region, 'ap-southeast-2'}
+      deliveryCompanyQueue: deliveryServiceQueue
+
+resources:
+  Resources:
+    orderEventsStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: order-events-stream
+        ShardCount: 1
+    orderTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ordersTable
+        AttributeDefinitions:
+          - AttributeName: orderId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: orderId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    deliveryServiceQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: deliveryServiceQueue
